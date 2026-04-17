@@ -1,0 +1,64 @@
+# ── Planning docs (local only) ─────────────────────────────────────────────
+plan.md
+local_plan.md
+*.docx
+*.tmp
+
+# ── Python ─────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+
+# ── Virtual environments ────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
+crp/
+.venv-dbt/
+
+# ── Environment / secrets ───────────────────────────────────────────────────
+.env
+.env.*
+!.env.example      # keep example files so others know what vars are needed
+
+# ── Jupyter notebooks (checkpoints) ────────────────────────────────────────
+.ipynb_checkpoints/
+
+# ── ML model binaries (large files — use DVC or model registry instead) ────
+*.pkl
+*.joblib
+*.h5
+*.pt
+*.pth
+ml-pipeline/models/
+ml-pipeline/data/raw/
+
+# ── Docker ──────────────────────────────────────────────────────────────────
+*.log
+docker-compose.override.yml
+
+# ── Database ────────────────────────────────────────────────────────────────
+*.sqlite
+*.db
+
+# ── OS files ────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── IDE ─────────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+
+
+ml-pipeline/data/processed/
