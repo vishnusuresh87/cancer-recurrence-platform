@@ -1,0 +1,12 @@
+version: 2
+
+sources:
+  - name: seer
+    description: Raw SEER cancer registry data
+    schema: public          # raw_seer table lives in the public schema
+    tables:
+      - name: raw_seer
+        description: Raw SEER data loaded from CSV
+
+
+        
