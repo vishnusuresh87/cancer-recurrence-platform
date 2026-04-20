@@ -1,0 +1,9 @@
+{
+  "model_version": "rsf_seer_v2.0.0",
+  "training_date": "2026-04-20T10:47:26.802077",
+  "training_samples": 95992,
+  "test_samples": 23998,
+  "c_index_train": 0.9748895801573199,
+  "c_index_test": 0.7684233441318494,
+  "data_source": "DBT fct_training_data"
+}
