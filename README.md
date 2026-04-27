@@ -144,6 +144,13 @@ seer_sample_200k.csv
 - `dbt-postgres` (`pip install dbt-postgres`)
 - Node.js (v18+)
 
+### ⚠️ Note on Large Files (Gitignore)
+To prevent repository bloat and ensure data privacy, the following directories are intentionally ignored by Git:
+- `ml-pipeline/models/`: Contains the large binary trained model files (e.g., `rsf_seer_v1.pkl`).
+- `ml-pipeline/data/raw/`: Contains the raw clinical dataset CSV files.
+
+**If you are forking this repository:** You must provide your own dataset and place it at `ml-pipeline/data/raw/seer_sample_200k.csv` if you wish to run the data loading and model retraining scripts locally.
+
 ### 1. Clone and start the stack
 ```bash
 git clone https://github.com/vishnusuresh87/cancer-recurrence-platform.git
