@@ -11,11 +11,11 @@ class Settings(BaseSettings):
     service_name: str = "model-management-service"
     
     # Database
-    db_host: str = "localhost"
-    db_port: int = 55432
-    db_name: str = "cancer_db"
-    db_user: str = "cancer_user"
-    db_password: str = "dev_password_123"
+    db_host: str
+    db_port: int
+    db_name: str
+    db_user: str
+    db_password: str
     
     # Local model storage (replaces GCS for dev)
     model_storage_path: str = "../../ml-pipeline/models"

@@ -19,7 +19,7 @@ app.add_middleware(
 )
 
 # Include routers
-app.include_router(predict.router, prefix="/api/v1", tags=["predictions"])
+app.include_router(predict.router, prefix="/api/v1/predict", tags=["predictions"])
 
 @app.on_event("startup")
 async def startup_event():
@@ -30,13 +30,20 @@ async def startup_event():
     model_loader.load_model()
     print("✅ Service ready")
 
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Stop poller on shutdown"""
+    from app.inference.model_loader import model_loader
+    model_loader.stop()
+
 
 @app.get("/")
 async def root():
     return {
-        "service": settings.service_name,
+        "service": "prediction-service",
         "status": "running",
-        "docs": "/docs"
+        "ready": model_loader.model is not None,
+        "version": model_loader.model_version
     }
 
 

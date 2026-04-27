@@ -1,5 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi import APIRouter, Depends, HTTPException, status, Response, Cookie, Request
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials, APIKeyCookie
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from pydantic import BaseModel, EmailStr, Field
@@ -42,15 +42,32 @@ class UserResponse(BaseModel):
 
 # ==================== Dependencies ====================
 
+# Custom dependency to get token from header OR cookie
+async def get_token(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials = Depends(HTTPBearer(auto_error=False))
+) -> str:
+    # 1. Try header
+    if credentials:
+        return credentials.credentials
+    
+    # 2. Try cookie
+    token = request.cookies.get("access_token")
+    if token:
+        return token
+        
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Not authenticated"
+    )
+
 async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    token: str = Depends(get_token),
     db: AsyncSession = Depends(get_db)
 ) -> User:
     """
     Dependency to get current authenticated user from JWT
     """
-    token = credentials.credentials
-    
     try:
         payload = verify_token(token)
         user_id = payload.get("user_id")
@@ -82,15 +99,13 @@ async def get_current_user(
 # ==================== Endpoints ====================
 
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
-async def register(request: RegisterRequest, db: AsyncSession = Depends(get_db)):
+async def register(
+    request: RegisterRequest, 
+    response: Response,
+    db: AsyncSession = Depends(get_db)
+):
     """
-    Register a new user
-    
-    Steps:
-    1. Check if email already exists
-    2. Hash password
-    3. Create user in database
-    4. Issue JWT token
+    Register a new user and set secure cookie
     """
     # Check if email already exists
     result = await db.execute(select(User).where(User.email == request.email))
@@ -123,10 +138,20 @@ async def register(request: RegisterRequest, db: AsyncSession = Depends(get_db))
         "role": new_user.role.value
     })
     
+    # Set HttpOnly Cookie
+    response.set_cookie(
+        key="access_token",
+        value=access_token,
+        httponly=True,
+        max_age=15 * 60,
+        samesite="lax",
+        secure=False,  # Set to True in production with HTTPS
+    )
+    
     return TokenResponse(
-        access_token=access_token,
+        access_token="cookie-set", # placeholder for UI
         token_type="bearer",
-        expires_in=15 * 60,  # 15 minutes in seconds
+        expires_in=15 * 60,
         user={
             "user_id": str(new_user.user_id),
             "email": new_user.email,
@@ -137,15 +162,13 @@ async def register(request: RegisterRequest, db: AsyncSession = Depends(get_db))
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(request: LoginRequest, db: AsyncSession = Depends(get_db)):
+async def login(
+    request: LoginRequest, 
+    response: Response,
+    db: AsyncSession = Depends(get_db)
+):
     """
-    Login existing user
-    
-    Steps:
-    1. Find user by email
-    2. Verify password
-    3. Update last_login
-    4. Issue JWT token
+    Login and set secure cookie
     """
     # Find user
     result = await db.execute(select(User).where(User.email == request.email))
@@ -175,8 +198,18 @@ async def login(request: LoginRequest, db: AsyncSession = Depends(get_db)):
         "role": user.role.value
     })
     
+    # Set HttpOnly Cookie
+    response.set_cookie(
+        key="access_token",
+        value=access_token,
+        httponly=True,
+        max_age=15 * 60,
+        samesite="lax",
+        secure=False,  # Set to True in production
+    )
+    
     return TokenResponse(
-        access_token=access_token,
+        access_token="cookie-set",
         token_type="bearer",
         expires_in=15 * 60,
         user={
@@ -186,6 +219,12 @@ async def login(request: LoginRequest, db: AsyncSession = Depends(get_db)):
             "created_at": user.created_at.isoformat()
         }
     )
+
+@router.post("/logout")
+async def logout(response: Response):
+    """Clear the authentication cookie"""
+    response.delete_cookie("access_token")
+    return {"detail": "Logged out successfully"}
 
 
 @router.get("/me", response_model=UserResponse)

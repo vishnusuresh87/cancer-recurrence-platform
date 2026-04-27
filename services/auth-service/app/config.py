@@ -12,15 +12,15 @@ class Settings(BaseSettings):
     jwt_refresh_token_expire_days: int = 7     # 7 days
     
     # Database
-    db_host: str = "localhost"
-    db_port: int = 5432
-    db_name: str = "cancer_db"
-    db_user: str = "cancer_user"
-    db_password: str = "dev_password_123"
+    db_host: str
+    db_port: int
+    db_name: str
+    db_user: str
+    db_password: str
     
     # Redis
-    redis_host: str = "localhost"
-    redis_port: int = 6379
+    redis_host: str
+    redis_port: int
     
     @property
     def database_url(self) -> str:

@@ -6,15 +6,15 @@ A production-grade microservices platform for predicting cancer recurrence risk 
 
 | Component | Status |
 |---|---|
-| PostgreSQL + Redis (Docker) | ✅ Running |
-| SEER data loading (`load_raw_seer.py`) | ✅ 200,000 rows loaded |
-| dbt data warehouse (`seer_warehouse`) | ✅ 119,990 rows in `fct_training_data` |
-| ML training pipeline (`retrain_from_dbt.py`) | ✅ RSF v2.0.0 trained successfully |
-| `auth-service` (port 8001) | ✅ Implemented |
-| `feature-service` (port 8002) | ✅ Implemented |
-| `prediction-service` (port 8003) | ✅ Implemented |
-| `model-management-service` (port 8004) | ✅ Implemented |
-| Frontend | 🔄 In progress |
+| PostgreSQL + Redis (Docker) | Running |
+| SEER data loading (`load_raw_seer.py`) | 200,000 rows loaded |
+| dbt data warehouse (`seer_warehouse`) | 119,990 rows in `fct_training_data` |
+| ML training pipeline (`retrain_from_dbt.py`) | RSF v1.0.0 trained successfully |
+| `bff-service` (port 8000) | Implemented (API Gateway) |
+| `auth-service` (Internal) | Implemented (JWT Auth) |
+| `prediction-service` (Internal) | Implemented (Feature processing + RSF Inference) |
+| `model-management-service` (Internal) | Implemented (Model lifecycle & hot-reloading) |
+| Frontend (port 3000) | Implemented (React, Material-UI, Prediction History) |
 
 ---
 
@@ -23,21 +23,23 @@ A production-grade microservices platform for predicting cancer recurrence risk 
 ```text
 ┌─────────────────────────────────────────────────────┐
 │                    Client / Frontend                │
+│                 (React / Material-UI)               │
 └───────────┬─────────────────────────────────────────┘
-            │
+            │ HTTP (port 3000)
 ┌───────────▼─────────────────────────────────────────┐
-│              API Gateway (planned: Kong)             │
-└───┬───────────┬───────────┬──────────────┬──────────┘
-    │           │           │              │
-┌───▼───┐  ┌───▼───┐  ┌────▼────┐  ┌─────▼──────┐
-│ Auth  │  │Feature│  │Predict  │  │  Model     │
-│:8001  │  │:8002  │  │:8003    │  │  Mgmt:8004 │
-└───────┘  └───────┘  └────┬────┘  └────────────┘
-                            │
-                    ┌───────▼───────┐
-                    │  RSF Model    │
-                    │  (.pkl file)  │
-                    └───────────────┘
+│              BFF Service (API Gateway)              │
+│                     (port 8000)                     │
+└───┬─────────────────────────┬───────────────────────┘
+    │ Proxy                   │ Proxy
+┌───▼───┐                 ┌───▼──────────┐       ┌──────────────┐
+│ Auth  │                 │ Prediction   │◄──────┤ Model Mgmt   │
+│Service│                 │ Service      │ Polls │ Service      │
+└───────┘                 └────┬─────────┘       └──────────────┘
+                               │
+                       ┌───────▼───────┐
+                       │  RSF Model    │
+                       │  (In-Memory)  │
+                       └───────────────┘
 ```
 
 ### Data Pipeline
@@ -59,144 +61,177 @@ seer_sample_200k.csv
   fct_training_data (~120k rows) ← ML-ready: 28 features + target
         │
         ▼  retrain_from_dbt.py
-  rsf_seer_v2.0.0.pkl           ← trained RSF model
+  rsf_seer_v1.pkl               ← trained RSF model
 ```
 
 ---
 
-## Services
+## Key Features & Functionalities
 
-| Service | Port | Responsibility |
-|---|---|---|
-| `auth-service` | 8001 | JWT authentication & user management |
-| `feature-service` | 8002 | Raw patient data → 28-feature vector (inference time) |
-| `prediction-service` | 8003 | Feature vector → survival probability |
-| `model-management-service` | 8004 | Model versioning, promote, rollback |
+### 1. Robust Machine Learning Inference
+- **Algorithm**: Random Survival Forest (`scikit-survival`) trained on real SEER data.
+- **Inference Engine**: Translates complex clinical inputs (like broad histology categories) into strict ICD-O-3 numeric representations and processes 28 engineered features on the fly.
+- **Explainability**: Generates dynamic risk levels, interpretation text, and a time-horizon survival curve.
+
+### 2. Microservices Architecture
+- **BFF (Backend-For-Frontend)**: Centralized API gateway managing CORS and proxying requests to private microservices.
+- **Private Networking**: Core services (`auth`, `prediction`, `model-management`) are shielded from public access, communicating via internal Docker networking.
+
+### 3. Automated Model Lifecycle Management
+- **Zero-Downtime Swaps**: The `prediction-service` runs a background thread that polls the `model-management-service` every 6 hours. If a new production model is detected, it is hot-reloaded into memory without dropping requests.
+- **Redis Caching**: The active model pipeline is cached in Redis to accelerate load times across distributed worker nodes.
+
+### 4. Strict Type Safety & Validation
+- **Shared Pydantic Schemas**: A `shared-transformers` directory acts as a single source of truth for Enums and API contracts, ensuring the frontend, BFF, and prediction services are strictly synchronized.
+
+### 5. Data Engineering & Analytics Engineering (dbt)
+- **dbt (data build tool)**: The entire ML data pipeline is built using dbt (`dbt-postgres`). It serves as the bridge between raw data and the ML model.
+- **Data Quality & Testing**: Enforces constraints, not-null checks, and accepted values directly on the `cancer-warehouse` database before any model training occurs.
+- **Modular Transformations**: Uses a layered architecture (Staging → Intermediate → Marts) using ephemeral models to calculate node ratios, harmonize staging, and generate the final `fct_training_data` table efficiently.
+
+### 6. Production-Ready Frontend
+- Developed using **React** and **Material-UI**.
+- Features an intuitive **Prediction Form** with clinical constraints (e.g., locking breast-cancer-specific biomarkers when inapplicable).
+- Includes a persistent **Prediction History** dashboard linked to the user's account.
+
+---
+
+## Detailed Component Breakdown & Inner Workings
+
+### 1. Frontend (React + Material-UI)
+- **Role:** The user-facing application where clinicians or patients input clinical data to receive a recurrence prediction. Exposes port 3000.
+- **Inner Workings:** It provides a dynamic form that ensures only valid combinations of data can be submitted (e.g., locking breast-cancer-specific biomarkers when the cancer site is not breast). It communicates exclusively with the `bff-service` to authenticate users and fetch predictions. It also includes a dashboard to view past prediction history.
+
+### 2. BFF Service (Backend-For-Frontend / API Gateway)
+- **Role:** Acts as the single public entry point (Port 8000) for the Frontend to interact with the backend infrastructure.
+- **Inner Workings:** Built with FastAPI, it acts as a reverse proxy routing requests to the isolated internal microservices (`auth-service` and `prediction-service`). It handles Cross-Origin Resource Sharing (CORS) and ensures that internal service ports and IPs are never exposed to the public internet, adding a critical layer of security.
+
+### 3. Prediction Service
+- **Role:** The core ML inference engine of the platform. Runs on an internal Docker network.
+- **Inner Workings:** 
+  - **Feature Processing:** When it receives raw clinical data, it utilizes a `FeatureProcessor` to map human-readable inputs (like "Ductal carcinoma") into strict numeric representations (like ICD-O-3 code `8500.0`) that the model was trained on. It calculates complex features like `node_ratio` and `treatment_intensity` on the fly.
+  - **Inference:** It runs the processed 28-feature vector through the loaded Random Survival Forest (RSF) model to compute a survival curve and a specific recurrence probability for a given time horizon.
+  - **Persistence:** It saves the raw inputs, the generated prediction, and the model version used to the PostgreSQL database for historical tracking.
+  - **Hot-Reloading:** It runs a background polling thread that checks the `model-management-service` every 6 hours. If a new model version is detected, it hot-reloads the new `.pkl` model into memory without dropping any active requests.
+
+### 4. Model Management Service
+- **Role:** The control plane for the machine learning model lifecycle. Runs on an internal Docker network.
+- **Inner Workings:** It tracks all trained model versions in the PostgreSQL database. When data scientists train a new model (e.g., `rsf_seer_v2.0.0`), it is registered here. This service exposes an API that the `prediction-service` calls to discover the exact file path of the currently active "Production" model, enabling automated zero-downtime model swaps.
+
+### 5. Auth Service
+- **Role:** Manages user identity and security. Runs on an internal Docker network.
+- **Inner Workings:** It handles user registration, login, and issues JSON Web Tokens (JWT). These tokens are required to access the prediction endpoints via the BFF. It stores encrypted user credentials securely in the PostgreSQL database.
+
+### 6. Data Engineering & Analytics (dbt + cancer-warehouse)
+- **Role:** Transforms raw SEER dataset exports into clean, ML-ready training data. Exposes port 5433 for data scientist access.
+- **Inner Workings:** Raw CSV data is loaded into the `cancer-warehouse` (a dedicated PostgreSQL instance). `dbt` (data build tool) then runs a series of SQL-based transformations. It enforces strict data quality tests (not-null, accepted values), creates ephemeral intermediate views to calculate features, and finally materializes a pristine `fct_training_data` table containing ~120,000 rows. The Python ML pipeline then reads directly from this table to train the RSF model.
+
+### 7. Redis Cache
+- **Role:** High-speed in-memory caching layer. Runs on an internal Docker network.
+- **Inner Workings:** Once the `prediction-service` loads the heavy (~350MB) model `.pkl` file from disk, it serializes the loaded pipeline into Redis (with a 24-hour TTL). If multiple instances of the `prediction-service` are spun up to horizontally scale and handle high traffic, the worker nodes bypass the slow disk read and fetch the active model instantly from Redis.
+
+### 8. PostgreSQL (cancer-db)
+- **Role:** The primary transactional database for the application. Exposes port 55432.
+- **Inner Workings:** It stores structured relational data across several domains: User accounts and hashed passwords for the `auth-service`, prediction history logs for the `prediction-service`, and model version metadata for the `model-management-service`.
 
 ---
 
 ## Quick Start
 
 ### Prerequisites
-- Docker Desktop (with the Docker daemon running)
+- Docker Desktop (with the Docker daemon running and WSL2 integration enabled)
 - Python 3.10+ and WSL2 (Ubuntu) for running scripts
-- dbt-postgres (`pip install dbt-postgres`)
+- `dbt-postgres` (`pip install dbt-postgres`)
+- Node.js (v18+)
 
 ### 1. Clone and start the stack
 ```bash
 git clone https://github.com/vishnusuresh87/cancer-recurrence-platform.git
 cd cancer-recurrence-platform
-docker-compose up -d
+docker compose up -d --build
 ```
 
-### 2. Load SEER data into the warehouse
+### 2. Start the Frontend
+```bash
+cd frontend
+npm install
+npm start
+```
+The app will be available at `http://localhost:3000`.
+
+### 3. Load SEER data into the warehouse (Optional - For Retraining)
 ```bash
 cd scripts
 pip install pandas psycopg2-binary sqlalchemy
 python load_raw_seer.py
-# ✅ Loaded 200,000 rows to raw_seer table
+# Loaded 200,000 rows to raw_seer table
 ```
 
-### 3. Run dbt transformations
+### 4. Run dbt transformations (Optional - For Retraining)
 ```bash
 cd dbt-transformations/seer_warehouse
 pip install dbt-postgres
 dbt run
-# ✅ fct_training_data: ~120,000 rows
+# fct_training_data: ~120,000 rows
 ```
 
-### 4. Train the model
+### 5. Train the model (Optional - For Retraining)
 ```bash
 cd ml-pipeline/scripts
 pip install scikit-survival scikit-learn sqlalchemy joblib pandas numpy
 python retrain_from_dbt.py
-# ✅ Model saved: rsf_seer_v2.0.0.pkl
-```
-
-### 5. Verify services
-| URL | Description |
-|---|---|
-| http://localhost:8001/docs | Auth Service API docs |
-| http://localhost:8002/docs | Feature Service API docs |
-| http://localhost:8003/docs | Prediction Service API docs |
-| http://localhost:8004/docs | Model Management API docs |
-
----
-
-## Project Structure
-
-```text
-cancer-recurrence-platform/
-├── docker-compose.yml              # Full local stack (2 PostgreSQL DBs + Redis)
-├── services/
-│   ├── auth-service/               # FastAPI — JWT auth (port 8001)
-│   ├── feature-service/            # FastAPI — feature engineering (port 8002)
-│   ├── prediction-service/         # FastAPI — RSF inference (port 8003)
-│   └── model-management-service/   # FastAPI — model lifecycle (port 8004)
-├── ml-pipeline/
-│   ├── scripts/
-│   │   └── retrain_from_dbt.py     # Train RSF from fct_training_data
-│   ├── notebooks/                  # EDA & experiments
-│   └── models/                     # Trained model files (gitignored)
-├── dbt-transformations/
-│   └── seer_warehouse/
-│       ├── models/
-│       │   ├── example/staging/    # stg_seer_raw (view)
-│       │   ├── intermediate/       # int_features, int_recurrence_target (ephemeral)
-│       │   └── marts/              # fct_training_data (table, ~120k rows)
-│       └── dbt_project.yml
-├── scripts/
-│   ├── load_raw_seer.py            # Load CSV → raw_seer (PostgreSQL)
-│   ├── init_db.sql                 # PostgreSQL schema (cancer-db)
-│   └── create_model_versions_table.sql
-└── shared/
-    ├── shared-schemas/             # Pydantic schemas shared across services
-    └── shared-utils/               # Common utilities
+# Model saved: rsf_seer_v1.pkl
 ```
 
 ---
 
-## ML Model
-
-- **Algorithm**: Random Survival Forest (`scikit-survival`)
-- **Dataset**: SEER (Surveillance, Epidemiology, and End Results) — 200k patients
-- **Training data**: ~120k first-primary malignant cases from `fct_training_data`
-- **Target**: `recurred` (binary) + `time_to_recurrence_months` (survival time)
-- **Features**: 28 engineered features (age, stage, grade, treatment, node ratio, receptor subtype, etc.)
-- **Version**: `rsf_seer_v2.0.0` — trained from dbt-transformed warehouse data
-
----
-
-## API Usage Example
+## API Usage Example via BFF
 
 ```bash
-# 1. Transform raw patient data into a feature vector
-curl -X POST http://localhost:8002/api/v1/transform \
+# Run prediction with raw clinical features through the BFF Gateway
+curl -X POST http://localhost:8000/api/predict \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <your_jwt_token>" \
   -d '{
     "age_group": "50-54 years",
     "cancer_site": "Breast",
     "harmonized_stage": "Localized",
     "tumor_grade": "Grade II",
+    "histology_broad": "Ductal carcinoma",
+    "tumor_size_mm": 20,
+    "nodes_examined": 10,
+    "nodes_positive": 2,
     "surgery_performed": true,
     "chemotherapy": true,
-    ...
+    "radiation_type": "None",
+    "surgery_radiation_sequence": "Surgery before radiation",
+    "days_to_treatment": "0-30 days",
+    "mets_bone": false,
+    "mets_liver": false,
+    "mets_lung": false,
+    "mets_brain": false,
+    "lvi": "Absent",
+    "er_status": "Positive",
+    "pr_status": "Positive",
+    "her2_status": "Negative",
+    "marital_status": "Married",
+    "income_level": "Medium",
+    "rural_urban": "Urban",
+    "laterality": "Left",
+    "sex": "Female",
+    "query_years": 5
   }'
-
-# 2. Run prediction with the feature vector
-curl -X POST http://localhost:8003/api/v1/predict \
-  -H "Content-Type: application/json" \
-  -d '{"features": [...], "time_horizon": 60}'
 ```
 
 ---
 
 ## Tech Stack
 
+- **Frontend**: React, Material-UI, Axios
 - **API Framework**: FastAPI + Uvicorn
-- **Database**: PostgreSQL 15 — `cancer-db` (app data, port 55432) + `seer-warehouse` (ML data, port 5433)
-- **Cache**: Redis 7 (port 6379)
-- **Data Warehouse / ETL**: dbt-postgres (`seer_warehouse` project)
+- **Data Warehouse / ETL**: **dbt** (data build tool) via `dbt-postgres` (`seer_warehouse` project)
+- **Database**: PostgreSQL 15 — `cancer-db` (app data) + `cancer-warehouse` (dbt/ML training data)
+- **Cache**: Redis 7
 - **ML**: scikit-survival, scikit-learn, pandas, numpy
-- **Containerisation**: Docker + Docker Compose
-- **Runtime**: Python 3.12, WSL2 (Ubuntu)
+- **Containerisation**: Docker + Docker Compose V2
+- **Runtime**: Python 3.12, Node.js, WSL2 (Ubuntu)

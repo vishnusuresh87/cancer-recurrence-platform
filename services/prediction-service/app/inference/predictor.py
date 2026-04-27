@@ -1,32 +1,17 @@
-import numpy as np
 from scipy.interpolate import interp1d
 from app.inference.model_loader import model_loader
+from app.inference.processor import feature_processor
 
 
-def predict_recurrence(feature_vector: list[float], query_years: int) -> dict:
+def predict_recurrence(feature_dict: dict, query_years: int) -> dict:
     """
     Run RSF inference and return recurrence probability
-    
-    Args:
-        feature_vector: 28 features (from Feature Service)
-        query_years: How many years to predict (e.g., 5 for 5-year risk)
-    
-    Returns:
-        {
-            "probability_pct": float,
-            "risk_level": str,
-            "survival_curve": list,
-            "model_version": str
-        }
     """
     # Load model
     model = model_loader.get_model()
     
-    # Convert to numpy array
-    X = np.array(feature_vector).reshape(1, -1)
-    
-    if X.shape[1] != 28:
-        raise ValueError(f"Expected 28 features, got {X.shape[1]}")
+    # Process features: dict -> 1x28 numeric vector
+    X = feature_processor.process(feature_dict)
     
     # Get survival function from RSF
     survival_fn = model.predict_survival_function(X)[0]

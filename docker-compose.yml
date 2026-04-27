@@ -1,132 +1,134 @@
-# docker-compose.yml (in project root)
-
 services:
-  # PostgreSQL (replaces Cloud SQL)
+  # ==============================
+  # Infrastructure
+  # ==============================
+
   postgres:
-    image: public.ecr.aws/docker/library/postgres:15 # trouble with docker hub, switched to ECR public
+    image: public.ecr.aws/docker/library/postgres:15
     container_name: cancer-db
     environment:
-      POSTGRES_USER: cancer_user
-      POSTGRES_PASSWORD: dev_password_123
-      POSTGRES_DB: cancer_db
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
     ports:
-      - "55432:5432"
+      - "55432:5432" # Keep exposed for user direct access if needed
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./scripts/init_db.sql:/docker-entrypoint-initdb.d/01_init_db.sql
       - ./scripts/create_model_versions_table.sql:/docker-entrypoint-initdb.d/02_model_versions_migration.sql
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U cancer_user -d cancer_db" ]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
       interval: 5s
       timeout: 5s
       retries: 5
 
-  # Redis (replaces Cloud Memorystore)
   redis:
     image: redis:7
     container_name: cancer-cache
-    ports:
-      - "6379:6379"
+    # No port 6379 exposed to host (Internal only)
     volumes:
       - redis_data:/data
     healthcheck:
-      test: [ "CMD", "redis-cli", "ping" ]
+      test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 3s
       retries: 5
 
-  # PostgreSQL for BigQuery replacement (initially)
-  # Later we might use DuckDB for analytics
   bigquery-local:
     image: public.ecr.aws/docker/library/postgres:15
     container_name: cancer-warehouse
     environment:
-      POSTGRES_USER: warehouse_user
-      POSTGRES_PASSWORD: warehouse_pass
-      POSTGRES_DB: seer_warehouse
+      POSTGRES_USER: ${WAREHOUSE_USER}
+      POSTGRES_PASSWORD: ${WAREHOUSE_PASSWORD}
+      POSTGRES_DB: ${WAREHOUSE_DB}
     ports:
-      - "5433:5432" # Different port than main DB
+      - "5433:5432"
     volumes:
       - warehouse_data:/var/lib/postgresql/data
 
-  # Auth Service
+  # ==============================
+  # API Gateway / BFF
+  # ==============================
+
+  bff-service:
+    build: ./services/bff-service
+    container_name: bff-service
+    ports:
+      - "8000:8000" # THE ONLY PUBLIC API PORT
+    environment:
+      AUTH_SERVICE_URL: ${AUTH_SERVICE_URL}
+      PREDICTION_SERVICE_URL: ${PREDICTION_SERVICE_URL}
+    depends_on:
+      auth-service:
+        condition: service_started
+      prediction-service:
+        condition: service_started
+
+  # ==============================
+  # Microservices (Private Networking)
+  # ==============================
+
   auth-service:
-    image: python:3.10-slim
+    build: ./services/auth-service
     container_name: auth-service
     working_dir: /app
     volumes:
       - ./services/auth-service:/app
-    ports:
-      - "8001:8001"
     environment:
-      DB_HOST: postgres
-      DB_PORT: 5432
-      DB_NAME: cancer_db
-      DB_USER: cancer_user
-      DB_PASSWORD: dev_password_123
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
-    command: sh -c "pip install -r requirements.txt && uvicorn app.main:app --host 0.0.0.0 --port 8001"
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      REDIS_HOST: ${REDIS_HOST}
+      REDIS_PORT: ${REDIS_PORT}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
 
-  # Feature Service
-  feature-service:
-    image: python:3.10-slim
-    container_name: feature-service
-    working_dir: /app
-    volumes:
-      - ./services/feature-service:/app
-    ports:
-      - "8002:8002"
-    environment:
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
-    command: sh -c "pip install -r requirements.txt && uvicorn app.main:app --host 0.0.0.0 --port 8002"
-    depends_on:
-      redis:
-        condition: service_healthy
-
-  # Prediction Service
   prediction-service:
-    image: python:3.10-slim
+    build:
+      context: .
+      dockerfile: services/prediction-service/Dockerfile
     container_name: prediction-service
     working_dir: /app
-    ports:
-      - "8003:8003"
     environment:
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
-      MODEL_PATH: /app/ml-pipeline/mock-models/rsf_mock_v1.pkl
+      REDIS_HOST: ${REDIS_HOST}
+      REDIS_PORT: ${REDIS_PORT}
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      MODEL_MANAGEMENT_URL: ${MODEL_MANAGEMENT_URL}
+      PYTHONPATH: /app:/shared/shared-transformers
     volumes:
       - ./services/prediction-service:/app
-      - ./ml-pipeline:/app/ml-pipeline
-    command: sh -c "pip install -r requirements.txt && uvicorn app.main:app --host 0.0.0.0 --port 8003"
+      - ./ml-pipeline:/ml-pipeline
+      - ./shared/shared-transformers:/shared/shared-transformers
     depends_on:
       redis:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
 
-  # Model Management Service
   model-management-service:
-    image: python:3.10-slim
+    build: ./services/model-management-service
     container_name: model-management-service
     working_dir: /app
-    ports:
-      - "8004:8004"
     environment:
-      DB_HOST: postgres
-      DB_PORT: 5432
-      DB_NAME: cancer_db
-      DB_USER: cancer_user
-      DB_PASSWORD: dev_password_123
-      MODEL_STORAGE_PATH: /app/ml-pipeline/models
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      MODEL_STORAGE_PATH: ${MODEL_STORAGE_PATH}
     volumes:
       - ./services/model-management-service:/app
-      - ./ml-pipeline:/app/ml-pipeline
-    command: sh -c "pip install -r requirements.txt && uvicorn app.main:app --host 0.0.0.0 --port 8004 --reload"
+      - ./ml-pipeline:/ml-pipeline
     depends_on:
       postgres:
         condition: service_healthy
@@ -135,5 +137,3 @@ volumes:
   postgres_data:
   redis_data:
   warehouse_data:
-
-
