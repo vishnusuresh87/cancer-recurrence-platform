@@ -26,6 +26,11 @@ class SeerFeatureEngineer(BaseEstimator, TransformerMixin):
     def fit(self, X, y=None):
         return self
 
+    def _get_series(self, df, col, default_val):
+        if col in df.columns:
+            return df[col]
+        return pd.Series(default_val, index=df.index)
+
     def transform(self, X):
         # Ensure working on a copy
         df = X.copy()
@@ -56,11 +61,11 @@ class SeerFeatureEngineer(BaseEstimator, TransformerMixin):
             AgeGroup.YEARS_80_84.value: 82,
             AgeGroup.YEARS_85_PLUS.value: 87,
         }
-        out['age_numeric'] = df.get('age_group', '').map(age_mapping).fillna(50.0).astype(float)
+        out['age_numeric'] = self._get_series(df, 'age_group', '').map(age_mapping).fillna(50.0).astype(float)
         
         # 2-3. Pass through
-        out['sex'] = df.get('sex', 'Unknown')
-        out['cancer_site'] = df.get('cancer_site', 'Unknown')
+        out['sex'] = self._get_series(df, 'sex', 'Unknown')
+        out['cancer_site'] = self._get_series(df, 'cancer_site', 'Unknown')
         
         # 4. harmonized_grade
         def map_grade(v):
@@ -71,7 +76,7 @@ class SeerFeatureEngineer(BaseEstimator, TransformerMixin):
             if 'grade iii' in v_lower or 'poorly' in v_lower: return 3
             if 'grade iv' in v_lower or 'undifferentiated' in v_lower: return 4
             return -1
-        out['harmonized_grade'] = df.get('tumor_grade', '').apply(map_grade).astype(int)
+        out['harmonized_grade'] = self._get_series(df, 'tumor_grade', '').apply(map_grade).astype(int)
         
         # 5. harmonized_stage
         def map_stage(v):
@@ -82,25 +87,27 @@ class SeerFeatureEngineer(BaseEstimator, TransformerMixin):
             if v == HarmonizedStage.DISTANT.value: return 3
             return -1
         # Frontend provides "harmonized_stage" directly as string Localized/Regional etc
-        out['harmonized_stage'] = df.get('harmonized_stage', df.get('summary_stage', '')).apply(map_stage).astype(int)
+        stage_col = df['harmonized_stage'] if 'harmonized_stage' in df.columns else (df['summary_stage'] if 'summary_stage' in df.columns else pd.Series('', index=df.index))
+        out['harmonized_stage'] = stage_col.apply(map_stage).astype(int)
         
         # 6-9. Numeric/Pass-through
-        out['tumor_size_mm'] = pd.to_numeric(df.get('tumor_size_mm', -1), errors='coerce').fillna(-1).astype(float)
-        out['histology_code'] = df.get('histology_broad', df.get('histology_code', 'Unknown')).astype(str)
-        out['laterality'] = df.get('laterality', 'Unknown').astype(str)
-        out['nodes_positive'] = pd.to_numeric(df.get('nodes_positive', -1), errors='coerce').fillna(-1).astype(float)
+        out['tumor_size_mm'] = pd.to_numeric(self._get_series(df, 'tumor_size_mm', -1), errors='coerce').fillna(-1).astype(float)
+        hist_col = df['histology_broad'] if 'histology_broad' in df.columns else (df['histology_code'] if 'histology_code' in df.columns else pd.Series('Unknown', index=df.index))
+        out['histology_code'] = hist_col.astype(str)
+        out['laterality'] = self._get_series(df, 'laterality', 'Unknown').astype(str)
+        out['nodes_positive'] = pd.to_numeric(self._get_series(df, 'nodes_positive', -1), errors='coerce').fillna(-1).astype(float)
         
         # 10. node_ratio
-        nodes_pos = pd.to_numeric(df.get('nodes_positive', -1), errors='coerce').fillna(-1)
-        nodes_exam = pd.to_numeric(df.get('nodes_examined', -1), errors='coerce').fillna(-1)
+        nodes_pos = pd.to_numeric(self._get_series(df, 'nodes_positive', -1), errors='coerce').fillna(-1)
+        nodes_exam = pd.to_numeric(self._get_series(df, 'nodes_examined', -1), errors='coerce').fillna(-1)
         # Using numpy where for vectorized conditions
         out['node_ratio'] = np.where(nodes_exam > 0, nodes_pos / nodes_exam, -1.0)
         
         # 11-15. Metastasis 
-        mets_bone = df.get('mets_bone', False).astype(bool)
-        mets_liver = df.get('mets_liver', False).astype(bool)
-        mets_lung = df.get('mets_lung', False).astype(bool)
-        mets_brain = df.get('mets_brain', False).astype(bool)
+        mets_bone = self._get_series(df, 'mets_bone', False).astype(bool)
+        mets_liver = self._get_series(df, 'mets_liver', False).astype(bool)
+        mets_lung = self._get_series(df, 'mets_lung', False).astype(bool)
+        mets_brain = self._get_series(df, 'mets_brain', False).astype(bool)
         
         out['any_metastasis_at_dx'] = (mets_bone | mets_liver | mets_lung | mets_brain).astype(int)
         out['mets_bone'] = mets_bone.astype(int)
@@ -109,21 +116,21 @@ class SeerFeatureEngineer(BaseEstimator, TransformerMixin):
         out['mets_brain'] = mets_brain.astype(int)
         
         # 16-19.
-        out['lvi'] = df.get('lvi', 'Unknown').astype(str)
-        out['surgery_performed'] = df.get('surgery_performed', False).astype(int)
-        out['radiation_type'] = df.get('radiation_type', 'None').astype(str)
-        out['chemotherapy_binary'] = df.get('chemotherapy', False).astype(int)
+        out['lvi'] = self._get_series(df, 'lvi', 'Unknown').astype(str)
+        out['surgery_performed'] = self._get_series(df, 'surgery_performed', False).astype(int)
+        out['radiation_type'] = self._get_series(df, 'radiation_type', 'None').astype(str)
+        out['chemotherapy_binary'] = self._get_series(df, 'chemotherapy', False).astype(int)
         
         # 20. treatment_intensity
         rad_intensity = (out['radiation_type'] != 'None').astype(int)
         out['treatment_intensity'] = out['surgery_performed'] + out['chemotherapy_binary'] + rad_intensity
         
         # 21-25.
-        out['surgery_radiation_sequence'] = df.get('surgery_radiation_sequence', 'Unknown').astype(str)
-        out['days_to_treatment'] = df.get('days_to_treatment', 'Unknown').astype(str)
-        out['er_status'] = df.get('er_status', 'Unknown').astype(str)
-        out['pr_status'] = df.get('pr_status', 'Unknown').astype(str)
-        out['her2_status'] = df.get('her2_status', 'Unknown').astype(str)
+        out['surgery_radiation_sequence'] = self._get_series(df, 'surgery_radiation_sequence', 'Unknown').astype(str)
+        out['days_to_treatment'] = self._get_series(df, 'days_to_treatment', 'Unknown').astype(str)
+        out['er_status'] = self._get_series(df, 'er_status', 'Unknown').astype(str)
+        out['pr_status'] = self._get_series(df, 'pr_status', 'Unknown').astype(str)
+        out['her2_status'] = self._get_series(df, 'her2_status', 'Unknown').astype(str)
         
         # 26. breast_receptor_subtype
         def derive_subtype(row):
@@ -148,7 +155,7 @@ class SeerFeatureEngineer(BaseEstimator, TransformerMixin):
         out['breast_receptor_subtype'] = df.apply(derive_subtype, axis=1)
         
         # 27-28.
-        out['marital_status'] = df.get('marital_status', 'Unknown').astype(str)
-        out['income_level'] = df.get('income_level', 'Unknown').astype(str)
+        out['marital_status'] = self._get_series(df, 'marital_status', 'Unknown').astype(str)
+        out['income_level'] = self._get_series(df, 'income_level', 'Unknown').astype(str)
         
         return out[self.feature_columns]

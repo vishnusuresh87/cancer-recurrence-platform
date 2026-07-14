@@ -9,6 +9,7 @@ import { Login } from './pages/Login';
 import { Register } from './pages/Register';
 import { Predict } from './pages/Predict';
 import { History } from './pages/History';
+import { Profile } from './pages/Profile';
 import { authService } from './services/auth';
 
 // Create Material-UI theme
@@ -66,6 +67,14 @@ const AppRoutes = () => {
           element={
             <ProtectedRoute>
               <History />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/profile"
+          element={
+            <ProtectedRoute>
+              <Profile />
             </ProtectedRoute>
           }
         />

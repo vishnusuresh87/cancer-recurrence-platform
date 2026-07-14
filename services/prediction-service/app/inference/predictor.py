@@ -10,11 +10,16 @@ def predict_recurrence(feature_dict: dict, query_years: int) -> dict:
     # Load model
     model = model_loader.get_model()
     
-    # Process features: dict -> 1x28 numeric vector
-    X = feature_processor.process(feature_dict)
-    
-    # Get survival function from RSF
-    survival_fn = model.predict_survival_function(X)[0]
+    # Determine if the model is a unified Pipeline or a raw estimator
+    if hasattr(model, "steps") or model.__class__.__name__ == "Pipeline":
+        import pandas as pd
+        # Convert dictionary to DataFrame for the Pipeline's feature engineer step
+        df_input = pd.DataFrame([feature_dict])
+        survival_fn = model.predict_survival_function(df_input)[0]
+    else:
+        # Legacy raw model: Process features manually to 1x28 numeric vector
+        X = feature_processor.process(feature_dict)
+        survival_fn = model.predict_survival_function(X)[0]
     
     # Interpolate survival probability at target time
     target_months = query_years * 12

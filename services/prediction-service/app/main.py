@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.v1 import predict
 from app.config import settings
+from app.inference.model_loader import model_loader
 
 app = FastAPI(
     title="Cancer Recurrence Prediction Service",
@@ -24,7 +25,6 @@ app.include_router(predict.router, prefix="/api/v1/predict", tags=["predictions"
 @app.on_event("startup")
 async def startup_event():
     """Load model on startup"""
-    from app.inference.model_loader import model_loader
     print(f"🚀 Starting {settings.service_name}")
     print(f"📊 Model version: {settings.model_version}")
     model_loader.load_model()
@@ -33,7 +33,6 @@ async def startup_event():
 @app.on_event("shutdown")
 async def shutdown_event():
     """Stop poller on shutdown"""
-    from app.inference.model_loader import model_loader
     model_loader.stop()
 
 

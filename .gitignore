@@ -3,6 +3,7 @@ plan.md
 local_plan.md
 *.docx
 *.tmp
+.antigravitycli/
 
 # ── Python ─────────────────────────────────────────────────────────────────
 __pycache__/

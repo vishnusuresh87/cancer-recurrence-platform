@@ -16,8 +16,9 @@ export const History: React.FC = () => {
 
     const getRiskColor = (risk: string) => {
         switch (risk.toLowerCase()) {
+            case 'very high':
             case 'high': return 'error';
-            case 'medium': return 'warning';
+            case 'moderate': return 'warning';
             case 'low': return 'success';
             default: return 'default';
         }

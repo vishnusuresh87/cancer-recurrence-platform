@@ -8,7 +8,7 @@ import {
     Paper,
     Link,
 } from '@mui/material';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link as RouterLink } from 'react-router-dom';
 import { authService } from '../../services/auth';
 import { RegisterRequest } from '../../types';
 
@@ -112,7 +112,7 @@ export const RegisterForm: React.FC = () => {
                 <Box sx={{ textAlign: 'center' }}>
                     <Typography variant="body2">
                         Already have an account?{' '}
-                        <Link href="/login" underline="hover">
+                        <Link component={RouterLink} to="/login" underline="hover">
                             Sign in
                         </Link>
                     </Typography>
