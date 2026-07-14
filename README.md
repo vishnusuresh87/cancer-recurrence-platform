@@ -6,7 +6,7 @@ This repository supports both **Local Development** (Docker Compose, local Postg
 
 ---
 
-## 📚 Table of Contents
+## Table of Contents
 1. [Architecture & Workflow](#architecture--workflow)
 2. [Project Status](#project-status)
 3. [Key Features](#key-features)
@@ -18,7 +18,7 @@ This repository supports both **Local Development** (Docker Compose, local Postg
 
 ---
 
-## 🏗️ Architecture & Workflow
+## Architecture & Workflow
 
 ### 1. Request Flow (real-time prediction)
 ```text
@@ -68,7 +68,7 @@ seer_sample_200k.csv (Raw SEER Export)
 
 ---
 
-## 📊 Project Status
+## Project Status
 
 | Component | Status | Description |
 | :--- | :--- | :--- |
@@ -84,7 +84,7 @@ seer_sample_200k.csv (Raw SEER Export)
 
 ---
 
-## ✨ Key Features
+## Key Features
 
 1.  **Unified ML Pipelines:** Prevention of train-serve skew by wrapping preprocessing steps (`SeerFeatureEngineer`, `ColumnTransformer`) and the estimator (`RandomSurvivalForest`) directly inside a unified scikit-learn `Pipeline`.
 2.  **Zero-Downtime Hot-Reloading:** A background daemon thread inside the `prediction-service` polls the `model-management-service` every 6 hours and dynamically swaps the model in-memory without terminating active HTTP requests.
@@ -93,7 +93,7 @@ seer_sample_200k.csv (Raw SEER Export)
 
 ---
 
-## 📁 Component Breakdown
+## Component Breakdown
 
 *   [frontend/](file:///D:/GitHub/Data%20Mining/cancer-recurrence-platform/frontend): React application (Prediction Form, History, Profile details).
 *   [services/](file:///D:/GitHub/Data%20Mining/cancer-recurrence-platform/services): Backend microservices (auth, BFF, prediction, model-management).
@@ -104,7 +104,7 @@ seer_sample_200k.csv (Raw SEER Export)
 
 ---
 
-## 🚀 Quick Start (Local Stack)
+## Quick Start (Local Stack)
 
 ### Prerequisites
 *   Docker Desktop (daemon running)
@@ -138,7 +138,7 @@ $env:PYTHONPATH="shared/shared-transformers"
 
 ---
 
-## 🛠️ Audits & Applied Fixes
+## Audits & Applied Fixes
 
 We audited the codebase and resolved multiple bugs during local development:
 *   **Startup Bug:** Fixed a `NameError` crash in the `prediction-service` root endpoint by elevating `model_loader` imports.
@@ -150,7 +150,7 @@ We audited the codebase and resolved multiple bugs during local development:
 
 ---
 
-## 🔌 API Verification Example
+## API Verification Example
 
 Check API health directly via the BFF gateway:
 ```bash
@@ -163,7 +163,7 @@ curl http://localhost:8000/api/predict/health
 
 ---
 
-## 📄 Documentation Index
+## Documentation Index
 
 Explore detailed aspects of this project:
 *   [local_plan.md](file:///D:/GitHub/Data%20Mining/cancer-recurrence-platform/local_plan.md) — Tracks completed local environment steps, tests, and audited fixes.

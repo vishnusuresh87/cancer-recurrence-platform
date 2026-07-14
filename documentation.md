@@ -1,146 +1,216 @@
 # Cancer Recurrence Platform — Comprehensive Project Documentation
 
-A comprehensive guide and technical report covering the design, implementation, and deployment of the Cancer Recurrence Prediction Platform.
+This report serves as the complete technical manual for the Cancer Recurrence Prediction Platform. It details the system architecture, API endpoints, core business logic, machine learning pipelines, dbt modeling DAG, and local development auditing.
 
 ---
 
-## 📖 1. Project Overview & Objectives
+## 1. Project Overview & Objectives
 
-### The Objective
-The goal of this platform is to provide clinicians and cancer survivors with an evidence-based prediction of cancer recurrence probability (e.g. over a 5-year or 10-year horizon) using patient clinical history. 
-
-### Key Objectives
-*   **Predictive Accuracy:** Train machine learning models using the **SEER (Surveillance, Epidemiology, and End Results)** cancer registry dataset (comprising millions of historical patient records).
-*   **Train-Serve Skew Prevention:** Ensure features are engineered, encoded, and formatted identically during both training and real-time prediction.
-*   **Secure Microservices Architecture:** Containerize and isolate core operations (authentication, model serving, metadata tracking, and client-facing routing).
-*   **Production-Ready UI:** Provide an intuitive clinical form with inputs validation and prediction history tracking.
+The platform provides evidence-based survival predictions estimating the probability of cancer recurrence over a variable time horizon (e.g. 5-year or 10-year risk). It is trained on the SEER (Surveillance, Epidemiology, and End Results) database which tracks clinical characteristics, treatments, and vital statistics for millions of historical cancer cases.
 
 ---
 
-## 🏗️ 2. Architectural Design
+## 2. System Architecture & Microservice Breakdown
 
-The platform uses a microservices architecture to segregate concerns and secure communication paths:
+The platform follows a modular microservices architecture designed to decouple the frontend client from back-end database access and ML workloads. Internal microservices communicate securely inside a private network, and the Backend-For-Frontend (BFF) acts as the single gateway.
+
+### BFF Service (Backend-For-Frontend)
+*   **Role:** Exposes port 8000. It is the sole gateway intercepting public HTTP requests from the React client.
+*   **Routing Logic:** Proxies incoming requests to private backend ports using `httpx.AsyncClient` connections:
+    *   Requests to `/api/auth/*` are routed to the `auth-service` (port 8001).
+    *   Requests to `/api/predict/*` are routed to the `prediction-service` (port 8003).
+*   **Security:** Manages Cross-Origin Resource Sharing (CORS) configurations, stripping headers like `Host` to hide downstream details, and terminates proxy request timeouts (30.0s for predictions to accommodate ML workloads, 10.0s for others).
+
+### Auth Service
+*   **Role:** Handles user administration and authorization inside the private network (port 8001).
+*   **Identity Logic:** Registers users, hashes passwords using the `passlib` bcrypt algorithm, verifies credentials, and issues JSON Web Tokens (JWT) signed using a server-side secret key (`HS256`).
+*   **Token Verification:** Injects HTTP-only cookie parameters (`access_token`) on registration or login, enabling the BFF and frontend to authenticate requests without caching tokens in public JS memory.
+
+### Prediction Service
+*   **Role:** Serves as the core inference engine (port 8003).
+*   **Data Processing:** Preprocesses raw JSON payloads into numeric arrays using shared transformers, queries predictions from the in-memory survival model, and saves prediction logs.
+*   **Coordination:** Initiates a daemon thread at startup to poll the `model-management-service` for active model files.
+
+### Model Management Service
+*   **Role:** Acts as the ML model registry (port 8004).
+*   **Registry Logic:** Tracks model metadata (c-index, sample size, date) and file storage paths. When a model version is updated or marked as `production`, it notifies polling prediction servers.
+
+---
+
+## 3. Database Schema Specifications
+
+The PostgreSQL application database (`cancer-db`) is structured to support transactional states across multiple microservices.
+
+### Table: `users`
+Tracks patient and clinician accounts.
+*   `user_id`: UUID (Primary Key), defaults to `gen_random_uuid()`
+*   `email`: VARCHAR(255) (Unique, Indexed, Nullable=False)
+*   `password_hash`: VARCHAR(255) (Nullable=False)
+*   `role`: VARCHAR(20) (Defaults to 'patient')
+*   `created_at`: TIMESTAMP (Defaults to `NOW()`)
+*   `last_login`: TIMESTAMP (Nullable=True)
+
+### Table: `prediction_history`
+Maintains logs of all generated prediction outputs.
+*   `prediction_id`: UUID (Primary Key), defaults to `gen_random_uuid()`
+*   `user_id`: UUID (ForeignKey -> `users.user_id`, Indexed)
+*   `feature_vector`: JSONB (Stores raw inputs payload)
+*   `probability`: FLOAT (Recurrence percentage)
+*   `risk_level`: VARCHAR(20) (Low, Moderate, High, Very High)
+*   `model_version`: VARCHAR(50) (Active model tag)
+*   `created_at`: TIMESTAMP (Defaults to `NOW()`, Indexed)
+
+### Table: `model_versions`
+Coordinates model lifecycle tracking.
+*   `version`: VARCHAR(50) (Primary Key, e.g. `rsf_seer_v1.0.0`)
+*   `storage_path`: VARCHAR(500) (Local disk file path or GCS bucket URL)
+*   `status`: model_status (Enum: staging, production, archived, failed)
+*   `metrics`: JSONB (Model evaluation indices)
+*   `training_date`: TIMESTAMP
+*   `training_samples`: INTEGER
+*   `created_at`: TIMESTAMP (Defaults to `NOW()`)
+*   `promoted_at`: TIMESTAMP
+*   `archived_at`: TIMESTAMP
+
+---
+
+## 4. Preprocessing Logic & Shared Transformers
+
+The `SeerFeatureEngineer` class located in [shared/shared-transformers/transformers/pipeline_transformers.py](file:///D:/GitHub/Data%20Mining/cancer-recurrence-platform/shared/shared-transformers/transformers/pipeline_transformers.py) ensures that clinical features are engineered and mapped identically during training and inference.
+
+### Safe Column Retrieval (`_get_series`)
+To prevent crashes when input payloads lack optional columns, a helper method `_get_series` is implemented:
+```python
+def _get_series(self, df, col, default_val):
+    if col in df.columns:
+        return df[col]
+    return pd.Series(default_val, index=df.index)
+```
+This guarantees that missing optional keys return a Series initialized with appropriate default fallbacks (e.g. `Unknown` or `-1`) matching the dataframe index, enabling operations like `.map()` and `.fillna()` to execute safely.
+
+### Feature Mapping Logic
+*   **Age Groups:** Map nominal ranges to representative numeric midpoints:
+    *   `20-24 years` -> `22.0`
+    *   `50-54 years` -> `52.0`
+    *   `85+ years` -> `87.0`
+*   **Tumor Grade:** Map grading levels to numeric integers:
+    *   `Grade I` / `Well differentiated` -> `1`
+    *   `Grade II` / `Moderately differentiated` -> `2`
+    *   `Grade III` / `Poorly differentiated` -> `3`
+    *   `Grade IV` / `Undifferentiated` -> `4`
+    *   Fallbacks -> `-1`
+*   **Harmonized Stage:** Maps SEER stage summaries:
+    *   `In situ` -> `0`
+    *   `Localized` -> `1`
+    *   `Regional` -> `2`
+    *   `Distant` -> `3`
+*   **Days to Treatment:** Bucketed durations are mapped to average midpoints:
+    *   `0-30 days` -> `15`
+    *   `31-90 days` -> `60`
+    *   `91+ days` -> `120`
+*   **Histology Broad:** Maps broad clinical labels to specific ICD-O-3 integer codes used in training:
+    *   `Adenocarcinoma` -> `8140.0`
+    *   `Squamous cell carcinoma` -> `8070.0`
+    *   `Ductal carcinoma` -> `8500.0`
+    *   `Lobular carcinoma` -> `8520.0`
+    *   `Small cell carcinoma` -> `8041.0`
+    *   `Large cell carcinoma` -> `8012.0`
+    *   `Other` / `Unknown` -> `8000.0`
+*   **Lymph Node Ratio:** Computed as `node_ratio = nodes_positive / nodes_examined`. If `nodes_examined <= 0`, it defaults to `-1.0` (indicating node status unknown).
+*   **Treatment Intensity:** A composite score calculated by summing treatment binary flags:
+    `treatment_intensity = surgery_performed + chemotherapy_binary + radiation_binary` (Range: 0 to 3).
+*   **Receptor Subtype Matrix:** For breast cancer sites, maps estrogen receptor (ER), progesterone receptor (PR), and HER2 status:
+    *   ER positive or PR positive, and HER2 positive -> `HR+/HER2+`
+    *   ER positive or PR positive, and HER2 negative -> `HR+/HER2-`
+    *   ER negative and PR negative, and HER2 positive -> `HR-/HER2+`
+    *   ER negative, PR negative, and HER2 negative -> `Triple Negative`
+
+---
+
+## 5. In-Memory Hot-Reloading Mechanism
+
+The `ModelLoader` class in [services/prediction-service/app/inference/model_loader.py](file:///D:/GitHub/Data%20Mining/cancer-recurrence-platform/services/prediction-service/app/inference/model_loader.py) maintains the loaded model lifecycle.
+
+### Background Poller Daemon
+1.  **Thread Initialization:** At startup, `ModelLoader` spins up a background daemon thread running an infinite loop:
+    ```python
+    def _poll_loop(self):
+        while not self.shutdown_event.is_set():
+            try:
+                self.sync_with_production()
+            except Exception as e:
+                print(f"Model sync failed: {e}")
+            self.shutdown_event.wait(self.poll_interval)
+    ```
+2.  **State Verification:** It sends a request to the model registry endpoint `GET /api/v1/models/production`.
+3.  **Hot Swap:** If the registry returns a model version string that differs from `self.model_version`, it downloads the new `.pkl` binary path, invokes `joblib.load()` to deserialize the new estimator pipeline, and assigns it to `self.model`.
+4.  **Redis Caching:** Once loaded, it serializes the active model using `joblib.dumps()` and caches it in Redis with a 24-hour TTL. Distributed API instances can pull this cached binary directly from memory, reducing container startup overhead.
+
+---
+
+## 6. Training & Retraining Pipelines
+
+### Baseline Training Pipeline (`seer_training_pipeline.py`)
+This script executes a multi-step workflow on raw data:
+1.  **Sequential Chunking:** Reads raw SEER database exports (`seer_data_export.csv`) in sequential chunks of 100k rows. This preserves family/patient record ordering since clinical histories for the same patient appear contiguously.
+2.  **Random Sampling:** Extract a representative sample of 200k rows for model training.
+3.  **Target Creation & Censoring:** Recurrence events are computed by checking if a patient has multiple records. If a patient has multiple primary tumors:
+    *   If sequence indicator >= 2, the site is identical, and the duration gap between diagnoses >= 3 months, it is flagged as a recurrence (`recurred = 1`), and the target survival duration is set to the gap interval.
+    *   If no second record exists, the patient is flagged as right-censored (`recurred = 0`), meaning they did not recur within the observed timeframe, and the target survival duration is mapped to their survival months.
+4.  **Estimator Fitting:** Encodes target arrays into survival formats using `sksurv.util.Surv.from_arrays(event, time)`. It fits a `RandomSurvivalForest` using `scikit-survival`, calculating tree node splits using log-rank test statistics.
+
+### Skew-Free Pipeline Retraining (`retrain_from_dbt.py`)
+To prevent discrepancies between offline training and online serving, the retraining script creates a unified scikit-learn `Pipeline`:
+1.  **Data Extraction:** Queries raw training sets (`fct_training_data_raw`) directly from the analytics database.
+2.  **Pipeline Construction:**
+    ```python
+    pipeline = Pipeline([
+        ('feature_engineer', SeerFeatureEngineer()),
+        ('preprocessor', ColumnTransformer(transformers=[
+            ('cat', OrdinalEncoder(handle_unknown='use_encoded_value', unknown_value=-1), categorical_cols),
+            ('num', SimpleImputer(strategy='constant', fill_value=-1.0), numeric_cols)
+        ])),
+        ('rsf', RandomSurvivalForest(n_estimators=300, min_samples_leaf=15, n_jobs=-1, random_state=42))
+    ])
+    ```
+3.  **Unified Fit:** Invoking `pipeline.fit(X_train, y_train)` fits all preprocessing and estimator weights simultaneously.
+4.  **Evaluation:** Evaluates the model using the Harrell's Concordance Index (C-index) on the test split to assess survival risk ordering.
+5.  **Artifact Generation:** Serializes the complete `Pipeline` object into a single `.pkl` file.
+
+---
+
+## 7. Data Analytics Engineering with dbt
+
+The dbt project `seer_warehouse` performs structured transformations within the simulated data warehouse.
 
 ```text
-       🌐 React UI Client (Port 3000)
-                    │
-                    ▼ HTTP Requests
-     ┌─────────────────────────────────────────┐
-     │        BFF Service (API Gateway)        │
-     │         (FastAPI, Exposes Port 8000)    │
-     └──────┬───────────────────────────┬──────┘
-            │ Proxy                     │ Proxy
-     ┌──────▼──────┐             ┌──────▼──────────────┐
-     │ auth-service│             │ prediction-service  │
-     │ (Port 8001) │             │ (Port 8003)         │
-     └──────┬──────┘             └──────┬──────────┬───┘
-            │                           │          │ Polls
-            │                           │    ┌─────▼───────────────┐
-            │                           │    │model-mgmt-service   │
-            │                           │    │(Port 8004)          │
-            │                           │    └─────┬───────────────┘
-            │                           │          │ Reads/Writes
-     ┌──────▼───────────────────────────▼──────────▼───────────────┐
-     │                  Relational Database: postgres              │
-     │             (cancer-db App DB: Exposes Port 55432)          │
-     └─────────────────────────────────────────────────────────────┘
+raw_seer (Table) ──> stg_seer_raw (View) ──> int_recurrence_target (View) ──> fct_training_data_raw (Table)
 ```
 
-### Component Details
-1.  **Frontend ([frontend/](file:///D:/GitHub/Data%20Mining/cancer-recurrence-platform/frontend)):** Developed in React and Material-UI. It handles patient authentication pages, the clinical input form, user profile details, and historical predictions visualization using interactive charts (`recharts`).
-2.  **BFF Service ([services/bff-service/](file:///D:/GitHub/Data%20Mining/cancer-recurrence-platform/services/bff-service)):** A lightweight FastAPI proxy server. It is the only service exposing public ports. It manages CORS policies and routes incoming client requests to backend microservices over private networks.
-3.  **Auth Service ([services/auth-service/](file:///D:/GitHub/Data%20Mining/cancer-recurrence-platform/services/auth-service)):** Manages user credentials (hashing passwords using bcrypt) and session validation (issuing and signing JWT tokens).
-4.  **Prediction Service ([services/prediction-service/](file:///D:/GitHub/Data%20Mining/cancer-recurrence-platform/services/prediction-service)):** The ML inference engine. It loads the active Random Survival Forest model into memory, runs preprocessing, calculates probability curves, and logs transactions.
-5.  **Model Management Service ([services/model-management-service/](file:///D:/GitHub/Data%20Mining/cancer-recurrence-platform/services/model-management-service)):** Tracks available model files and metadata (C-index, training metrics) in the database. Exposes REST endpoints to query and update the active "production" version.
-6.  **Shared Library ([shared/shared-transformers/](file:///D:/GitHub/Data%20Mining/cancer-recurrence-platform/shared/shared-transformers)):** Contains constants, clinical enums, and the custom `SeerFeatureEngineer` transformer.
-7.  **Databases:**
-    *   **Main DB (`cancer-db`):** PostgreSQL storing relational schemas for users, profiles, logs, and model versions.
-    *   **Cache (`cancer-cache`):** Redis caching serialized active pipelines.
-    *   **Data Warehouse (`cancer-warehouse`):** PostgreSQL simulating the BigQuery analytics environment for ETL and training data storage.
+### 1. Staging (`stg_seer_raw.sql`)
+Maps raw source CSV headers to clean, standardized fields:
+*   Renames raw fields like `"Regional nodes positive (1988+)"` to `nodes_positive`.
+*   Casts raw columns to numeric data types.
+
+### 2. Intermediate (`int_recurrence_target.sql`)
+Computes survival time horizons and target events:
+*   Groups records by `patient_id` and orders them chronologically.
+*   Applies window functions to compare sequence numbers and diagnostic gaps between first and second primary tumors.
+*   Derives the boolean target `recurred` and duration target `time_to_recurrence_months`.
+
+### 3. Marts (`fct_training_data_raw.sql`)
+Assembles features for training:
+*   Extracts raw clinical labels (e.g. `mets_bone`, `lvi`, etc.) and filters records to ensure survival times are within valid ranges (0 to 20 years).
+*   This table is loaded directly by `retrain_from_dbt.py` to train unified pipelines.
 
 ---
 
-## 🗄️ 3. Database Schema Definitions
+## 8. Audit Findings & verified Local Status
 
-### 1. App Relational Schema (`cancer-db`)
+During local development, we completed a project audit and resolved several bugs:
+*   **Prediction Service NameError:** Resolved a startup crash in `main.py` by moving `model_loader` to module-level imports.
+*   **Pipeline Mismatch:** Rewrote `predictor.py` to support both raw estimators and unified `Pipeline` objects.
+*   **Missing Columns Crash:** Implemented the `_get_series` helper in `pipeline_transformers.py` to handle missing inputs.
+*   **Routing & Page Improvements:** Replaced auth anchor tags with `RouterLink` to enable client-side SPA routing, updated risk levels mapping colors on the history page, and added a user Profile page.
 
-```sql
--- Users Table
-CREATE TABLE users (
-    user_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    email VARCHAR(255) UNIQUE NOT NULL,
-    password_hash VARCHAR(255) NOT NULL,
-    role VARCHAR(20) DEFAULT 'patient',
-    created_at TIMESTAMP DEFAULT NOW(),
-    last_login TIMESTAMP
-);
-
--- Prediction History Table
-CREATE TABLE prediction_history (
-    prediction_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID REFERENCES users(user_id),
-    feature_vector JSONB,
-    probability FLOAT,
-    risk_level VARCHAR(20),
-    model_version VARCHAR(50),
-    created_at TIMESTAMP DEFAULT NOW()
-);
-
--- Model Versions Table
-CREATE TABLE model_versions (
-    version VARCHAR(50) PRIMARY KEY,
-    storage_path VARCHAR(500) NOT NULL,
-    status VARCHAR(20) DEFAULT 'staging' NOT NULL,
-    metrics JSONB,
-    training_date TIMESTAMP,
-    training_samples INTEGER,
-    created_at TIMESTAMP DEFAULT NOW(),
-    promoted_at TIMESTAMP,
-    archived_at TIMESTAMP
-);
-```
-
----
-
-## 🔄 4. Data Flow Processes
-
-### A. Prediction Request Flow
-1.  **UI Submit:** The doctor clicks "Get Prediction" sending raw form inputs to the BFF Gateway (`POST /api/predict`).
-2.  **Gateway Routing:** The BFF validates request timeouts and proxies the request to the private `prediction-service`.
-3.  **Authentication:** The `prediction-service` validates the JWT signature in the request headers or cookies.
-4.  **Model Loading & Execution:**
-    *   If the active model is a unified **scikit-learn Pipeline**, the raw dictionary is converted to a pandas DataFrame and fed into `model.predict_survival_function(df_input)`.
-    *   If it is a legacy estimator, the raw inputs are preprocessed manually using `FeatureProcessor` and run through the Random Survival Forest estimator.
-5.  **Risk Level Calculation:** Recurrence risk probability is calculated by interpolating survival probabilities at the requested timeframe (e.g. `query_years * 12` months).
-6.  **Persistence & Return:** The prediction is logged in `prediction_history` database and the computed risk details, interpretation text, and survival curve are returned to the user.
-
-### B. Automated Model Hot-Reloading Lifecycle
-1.  **Background Thread:** The `prediction-service` starts a daemon thread (`ModelLoader`) that runs in the background.
-2.  **Polling:** Every 6 hours, it calls the `model-management-service` endpoint `GET /api/v1/models/production`.
-3.  **Reloading:** If the active production version in the database is different from the model currently loaded in memory, it pulls the new `.pkl` model file, swaps it in memory, and updates the local Redis cache.
-
----
-
-## 📊 5. Data Engineering & ML Pipelines
-
-### Raw Data Loading (`load_raw_seer.py`)
-Loads raw SEER registry data from CSV in sequential chunks of 100k rows, performing basic null handling and type casts, and writes the raw records to the `raw_seer` table in `cancer-warehouse`.
-
-### Analytics Engineering (dbt transformations)
-The dbt project `seer_warehouse` executes a modular SQL-based DAG:
-*   **Staging (`stg_seer_raw`):** Standardizes column headers and converts raw clinical tags into standard data types.
-*   **Intermediate (`int_recurrence_target`):** Creates recurrence targets by grouping patients, checking if sequence indicators indicate recurrence (e.g., sequence >= 2 of same site cancer), and calculating gap months.
-*   **Marts:**
-    *   `fct_training_data_raw.sql` materializes a table of raw text fields that mirror the API structure, used to train unified pipeline estimators.
-    *   `fct_training_data.sql` materializes preprocessed columns for legacy estimators.
-
-### Machine Learning Pipeline
-*   **Algorithm:** Random Survival Forest (RSF) from `scikit-survival`. RSF handles survival prediction on right-censored data (patients who haven't recurred by the time the study concludes).
-*   **Train-Serve Skew Protection:** The ML Pipeline incorporates custom scikit-learn transformers (`SeerFeatureEngineer`) directly inside a unified `Pipeline` along with `ColumnTransformer` and `RandomSurvivalForest`.
-    *   **Benefit:** Training and real-time serving run the exact same codebase, preventing discrepancies.
-
----
-
-## 🛠️ 6. Local Setup, Audits & Verification
-
-Please refer to [local_plan.md](file:///D:/GitHub/Data%20Mining/cancer-recurrence-platform/local_plan.md) for detailed instructions on spinning up the local services, checking database schemas, running unit tests, and verifying local endpoints.
+All local fixes have been verified by executing the unit test suite and checking local endpoints via the BFF gateway. The entire local dev stack is running and clean.

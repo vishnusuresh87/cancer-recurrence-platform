@@ -1,10 +1,10 @@
 # Cancer Recurrence Platform — Cloud Deployment Plan
 
-This document outlines the deployment strategy for migrating the platform from a local Docker Compose setup to a production-grade cloud infrastructure on **Google Cloud Platform (GCP)** using **Google Kubernetes Engine (GKE)**.
+This document outlines the deployment strategy for migrating the platform from a local Docker Compose setup to a production-grade cloud infrastructure on Google Cloud Platform (GCP) using Google Kubernetes Engine (GKE).
 
 ---
 
-## 🏗️ Cloud Infrastructure Architecture
+## Cloud Infrastructure Architecture
 
 ```text
                                   [ INTERNET ]
@@ -44,7 +44,7 @@ This document outlines the deployment strategy for migrating the platform from a
 
 ---
 
-## 🛠️ GCP Resource Mapping
+## GCP Resource Mapping
 
 To ensure security, scalability, and high-availability, we map our local Docker services to dedicated GCP managed offerings:
 
@@ -59,7 +59,7 @@ To ensure security, scalability, and high-availability, we map our local Docker 
 
 ---
 
-## 🚀 Step-by-Step Deployment Strategy
+## Step-by-Step Deployment Strategy
 
 ### Phase 1: Infrastructure as Code (IaC) via Terraform
 1.  **Network Setup:** Provision a Virtual Private Cloud (VPC) with public and private subnets, Cloud NAT (allowing private GKE nodes to contact the internet without public IPs), and Private Service Connect (for databases).
@@ -93,7 +93,7 @@ To ensure security, scalability, and high-availability, we map our local Docker 
 
 ---
 
-## 📈 Monitoring & Reliability
+## Monitoring & Reliability
 
 1.  **Metrics:** Install **Prometheus Operator** in GKE. Expose custom endpoints `/metrics` on microservices (using `prometheus_client` in FastAPI) to track latency, request counts, and prediction outcomes.
 2.  **Dashboard:** Deploy **Grafana** connected to Prometheus to visualize cluster health and business performance.

@@ -1,41 +1,41 @@
 # Cancer Recurrence Platform — Local Development Status & Plan
 
-This document tracks the steps, design choices, audits, and fixes applied during Phase 1: **Local Development**.
+This document tracks the steps, design choices, audits, and fixes applied during Phase 1: Local Development.
 
 ---
 
-## 📅 Completed Steps
+## Completed Steps
 
 ### 1. Infrastructure & Databases
-*   [x] Set up local directory structure.
-*   [x] Configured Docker Compose configuration for multi-service setup:
+*   Set up local directory structure.
+*   Configured Docker Compose configuration for multi-service setup:
     *   **Main Database:** PostgreSQL `cancer-db` exposed on port `55432` for app transactional data.
     *   **In-Memory Cache:** Redis `cancer-cache` running internally on port `6379`.
     *   **Data Warehouse Simulation:** PostgreSQL `cancer-warehouse` (simulating BigQuery) exposed on port `5433`.
-*   [x] Implemented database migrations via SQL scripts:
+*   Implemented database migrations via SQL scripts:
     *   `01_init_db.sql` creates baseline tables (`users`, `user_profiles`, `prediction_history`, etc.).
     *   `02_model_versions_migration.sql` creates `model_versions` table with enum-based status (`staging`, `production`, `archived`, `failed`) and seeds the initial production version `rsf_seer_v1.0.0`.
 
 ### 2. Shared Libraries & Transformers
-*   [x] Structured [shared/shared-transformers/](file:///D:/GitHub/Data%20Mining/cancer-recurrence-platform/shared/shared-transformers) package with setuptools.
-*   [x] Created constants defining clinical enums (e.g. `CancerSite`, `BiomarkerStatus`, etc.) matching SEER datasets.
-*   [x] Implemented unified `SeerFeatureEngineer` custom scikit-learn transformer to prevent Train-Serve skew.
+*   Structured [shared/shared-transformers/](file:///D:/GitHub/Data%20Mining/cancer-recurrence-platform/shared/shared-transformers) package with setuptools.
+*   Created constants defining clinical enums (e.g. `CancerSite`, `BiomarkerStatus`, etc.) matching SEER datasets.
+*   Implemented unified `SeerFeatureEngineer` custom scikit-learn transformer to prevent Train-Serve skew.
 
 ### 3. Backend Microservices
-*   [x] **Auth Service:** Implemented asynchronous database sessions, JWT sign/verify, password hashing (bcrypt), registration, login, and `/me` routes.
-*   [x] **BFF Service:** Configured reverse proxies for `/api/auth` and `/api/predict` routes with centralized CORS and httpx timeout configurations.
-*   [x] **Prediction Service:** Configured custom inference engine, model polling thread (every 6 hours) to check for newer production models, and dynamic history tracking.
-*   [x] **Model Management Service:** Developed API endpoints to register, list, promote, rollback, and delete models from the model registry.
+*   **Auth Service:** Implemented asynchronous database sessions, JWT sign/verify, password hashing (bcrypt), registration, login, and `/me` routes.
+*   **BFF Service:** Configured reverse proxies for `/api/auth` and `/api/predict` routes with centralized CORS and httpx timeout configurations.
+*   **Prediction Service:** Configured custom inference engine, model polling thread (every 6 hours) to check for newer production models, and dynamic history tracking.
+*   **Model Management Service:** Developed API endpoints to register, list, promote, rollback, and delete models from the model registry.
 
 ### 4. Frontend Client
-*   [x] Developed single-page React app using Material-UI and React Query.
-*   [x] Implemented dynamic form validation (e.g., locking breast cancer biomarkers when non-applicable).
-*   [x] Developed Prediction History page with status chips indicating risk levels.
-*   [x] Created Account Profile page showing patient registration metadata.
+*   Developed single-page React app using Material-UI and React Query.
+*   Implemented dynamic form validation (e.g., locking breast cancer biomarkers when non-applicable).
+*   Developed Prediction History page with status chips indicating risk levels.
+*   Created Account Profile page showing patient registration metadata.
 
 ---
 
-## 🛠️ Code Audit & Applied Fixes
+## Code Audit & Applied Fixes
 
 During local development, we audited the full project and successfully fixed several bugs:
 
@@ -50,7 +50,7 @@ During local development, we audited the full project and successfully fixed sev
 
 ---
 
-## 🧪 Local Testing & Verification
+## Local Testing & Verification
 
 1.  **Shared Transformer Unit Tests:**
     *   Created `test_pipeline_transformers.py` containing test cases for basic feature engineering and missing column fallbacks.
